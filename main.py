@@ -3,6 +3,8 @@ import ipaddress
 import socket
 import re
 import netifaces
+import concurrent.futures
+import time
 
 def get_local_ip():
     try:
@@ -46,13 +48,11 @@ def get_mac(ip):
         pass
     return "Unknown"
 
-def scan_network(ip_range):
-    devices = []
-    for ip in ip_range:
-        if ping(str(ip)):
-            mac = get_mac(str(ip))
-            devices.append({'ip': str(ip), 'mac': mac})
-    return devices
+def scan_ip(ip):
+    if ping(str(ip)):
+        mac = get_mac(str(ip))
+        return {'ip': str(ip), 'mac': mac}
+    return None
 
 def main():
     local_ip = ipaddress.ip_address(get_local_ip())
@@ -60,11 +60,32 @@ def main():
     
     print(f"Local IP: {local_ip}")
     print(f"Scanning network: {subnet}")
-    devices = scan_network(subnet.hosts())
-
-    print("\nDevices found on the network:")
+    
+    start_time = time.time()
+    total_ips = subnet.num_addresses - 2  # Subtract network and broadcast addresses
+    
+    devices = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+        future_to_ip = {executor.submit(scan_ip, ip): ip for ip in subnet.hosts()}
+        for i, future in enumerate(concurrent.futures.as_completed(future_to_ip), 1):
+            result = future.result()
+            if result:
+                devices.append(result)
+            
+            # Update progress
+            progress = (i / total_ips) * 100
+            elapsed_time = time.time() - start_time
+            est_total_time = elapsed_time / (i / total_ips)
+            remaining_time = est_total_time - elapsed_time
+            
+            print(f"\rProgress: {progress:.1f}% | Elapsed: {elapsed_time:.1f}s | Remaining: {remaining_time:.1f}s", end="")
+    
+    print("\n\nDevices found on the network:")
     for device in devices:
         print(f"IP: {device['ip']:<15} MAC: {device['mac']}")
+    
+    total_time = time.time() - start_time
+    print(f"\nTotal scan time: {total_time:.1f} seconds")
 
 if __name__ == "__main__":
     main()
